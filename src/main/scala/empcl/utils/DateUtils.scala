@@ -31,10 +31,7 @@ object DateUtils {
       }
       Some(flag)
     } catch {
-      case ex: ParseException => {
-        ex.printStackTrace()
-        None
-      }
+      case ex: ParseException => None
     }
   }
 
@@ -55,10 +52,7 @@ object DateUtils {
       }
       Some(flag)
     } catch {
-      case ex: ParseException => {
-        ex.printStackTrace()
-        None
-      }
+      case ex: ParseException => None
     }
   }
 
@@ -78,10 +72,7 @@ object DateUtils {
       val result = (d1 - d2) / 1000
       Some(result)
     } catch {
-      case ex => {
-        ex.printStackTrace()
-        None
-      }
+      case ex: ParseException => None
     }
   }
 
@@ -132,6 +123,7 @@ object DateUtils {
 
   /**
     * 解析时间字符串
+    *
     * @param time 时间字符串
     * @return Date
     */
@@ -139,15 +131,14 @@ object DateUtils {
     try {
       Some(TIME_FORMAT.parse(time))
     } catch {
-      case ex => {
-        ex.printStackTrace()
+      case ex: ParseException =>
         None
-      }
     }
   }
 
   /**
     * 格式化日期key
+    *
     * @param date
     * @return
     */
@@ -158,6 +149,7 @@ object DateUtils {
   /**
     * 格式化时间，保留到分钟级别
     * yyyyMMddHHmm
+    *
     * @param date
     * @return
     */
@@ -165,6 +157,5 @@ object DateUtils {
     val sdf = new SimpleDateFormat("yyyyMMddHHmm")
     sdf.format(date)
   }
-
 
 }

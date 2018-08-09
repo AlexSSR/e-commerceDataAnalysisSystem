@@ -2,7 +2,9 @@ package empcl
 
 import java.util.Date
 
-import empcl.utils.DateUtils
+import empcl.conf.ConfigurationManager
+import empcl.dao.factory.DaoFactory
+import empcl.utils._
 
 /**
   * @author : empcl
@@ -12,15 +14,22 @@ object DateTest {
 
   def main(args: Array[String]): Unit = {
 
-    /*val b = DateUtils.before("a","b")
-    println(b)*/
-    //    val datetime = "2018-22-23 22:11:33"
-    val datetime = "a"
-    /*println(DateUtils.getDateHour(datetime))
-    val date = new Date()
-    println(date)
-    println(DateUtils.getYesterdayDate())*/
-    println(DateUtils.parseTime(datetime).getOrElse("no"))
+    /*val a = StringUtils.getFieldFromConcatString("searchKeywords=|clickCategoryIds=1,2,3","\\|","clickCategoryId")
+    println(a.isEmpty)*/
+    // searchKeywords=|clickCategoryIds=1,2,3
+    /*val data = "searchKeywords=|clickCategoryIds=4"
+    val dataField = "clickCategoryIds"
+    val paramater = "searchKeywords=|clickCategoryIds1= 1,2,3,18,20 |clickCategoryIds2= "
+    val startParamField = "clickCategoryIds1"
+    val endParamField = "clickCategoryIds2"
+//    val a = ValidUtils.between(data,dataField,paramater,startParamField,endParamField)
+    val b = ValidUtils.in(data,dataField,paramater,startParamField)
+    val c = ValidUtils.equals(data,dataField,paramater,endParamField)
+    print(c)*/
+//    println(ConfigurationManager.getProperty("a"))
+    println(DaoFactory.getTaskDao.findById(1L))
+    println(DaoFactory.getTaskDao.findById(2L))
+
   }
 
 }
