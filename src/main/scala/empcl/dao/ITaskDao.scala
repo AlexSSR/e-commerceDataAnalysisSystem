@@ -14,6 +14,6 @@ abstract class ITaskDao {
     * @param taskId 主键
     * @return 任务
     */
-  def findById(taskId: Long): Task
+  def findById(taskId: Any): Task
 
 }

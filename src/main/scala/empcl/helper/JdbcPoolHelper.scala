@@ -43,11 +43,11 @@ class JdbcPoolHelper extends Serializable {
 
   def getConnection: Connection = dataSource.getConnection
 
-  def executeQuery(sql: String, param: String,addParam: (String,PreparedStatement) => Unit,parseResultSet: (ResultSet) => Option[Any]): Option[Any] = {
+  def executeQuery(sql: String, params: Array[Any],addParam: (Array[Any],PreparedStatement) => Unit,parseResultSet: (ResultSet) => Option[Any]): Option[Any] = {
     val conn = getConnection
     val stmt = conn.prepareStatement(sql)
     try {
-      addParam(param,stmt)
+      addParam(params,stmt)
       val rs = stmt.executeQuery()
       parseResultSet(rs)
     } finally {

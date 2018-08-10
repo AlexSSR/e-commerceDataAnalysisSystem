@@ -29,6 +29,8 @@ object DateTest {
 //    println(ConfigurationManager.getProperty("a"))
     println(DaoFactory.getTaskDao.findById(1L))
     println(DaoFactory.getTaskDao.findById(2L))
+    println(DaoFactory.getTaskDao.findById(3L))
+
 
   }
 
