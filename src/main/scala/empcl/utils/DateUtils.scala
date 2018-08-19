@@ -77,6 +77,16 @@ object DateUtils {
   }
 
   /**
+    *  获取小时
+    * @param dateTime 时间（yyyy-MM-dd HH:mm:ss）
+    * @return HH
+    */
+  def getHour(dateTime: String): String = {
+    val dt = dateTime.split(" ")
+    val hour = dt(1).split(":")(0)
+    hour
+  }
+  /**
     * 获取年月日和小时
     *
     * @param datetime 时间（yyyy-MM-dd HH:mm:ss）
@@ -94,7 +104,7 @@ object DateUtils {
     * @return 当天日期
     */
   def getTodayDate(): String = {
-    TIME_FORMAT.format(new Date())
+    DATE_FORMAT.format(new Date())
   }
 
   /**
@@ -156,6 +166,12 @@ object DateUtils {
   def formatTimeMinute(date: Date): String = {
     val sdf = new SimpleDateFormat("yyyyMMddHHmm")
     sdf.format(date)
+  }
+
+  def parseTime2String(time: Long): String = {
+    val calendar = Calendar.getInstance()
+    calendar.setTimeInMillis(time)
+    TIME_FORMAT.format(calendar.getTime)
   }
 
 }

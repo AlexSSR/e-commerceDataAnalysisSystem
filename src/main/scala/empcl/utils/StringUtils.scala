@@ -12,12 +12,12 @@ import scala.util.control.Breaks._
 object StringUtils {
 
   // 判断字符串是否为空
-  def isEmpty(str: String): Boolean = {
+  def isEmpty(str: Any): Boolean = {
     str == null || "".equals(str)
   }
 
   // 判断字符串是否不为空
-  def isNotEmpty(str: String): Boolean = {
+  def isNotEmpty(str: Any): Boolean = {
     !isEmpty(str)
   }
 
@@ -101,12 +101,13 @@ object StringUtils {
     var index2 = 0
     val len = fields.length
     while (index2 < len){
-      fieldsBuffer.append(fields(index2))
+//      fieldsBuffer.append(fields(index2))
+      fieldsBuffer += fields(index2)
       if(index2 != len - 1) {
         fieldsBuffer.append("|")
       }
       index2 = index2 + 1
     }
-    fieldsBuffer.toString()
+    fieldsBuffer.mkString("")
   }
 }

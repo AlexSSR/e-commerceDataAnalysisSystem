@@ -55,6 +55,18 @@ class JdbcPoolHelper extends Serializable {
     }
   }
 
+  // 不需要参数进行查询操作
+  def executeQuery(sql: String,parseResultSet: (ResultSet) => Option[Any]): Option[Any] = {
+    val conn = getConnection
+    val stmt = conn.prepareStatement(sql)
+    try {
+      val rs = stmt.executeQuery()
+      parseResultSet(rs)
+    } finally {
+      if (!stmt.isClosed) stmt.close() // conn不能关闭，result以及stmt可以关闭
+    }
+  }
+
   def execute(sql: String, addParam: (PreparedStatement) => Unit): Array[Int] = {
     val conn = getConnection
     val stmt = conn.prepareStatement(sql)

@@ -1,6 +1,6 @@
 package empcl.dao
 
-import empcl.cases.Task
+import empcl.spark.Task
 
 /**
   * @author : empcl

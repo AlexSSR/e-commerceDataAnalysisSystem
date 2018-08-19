@@ -2,9 +2,9 @@ package empcl.dao.impl
 
 import java.sql.{PreparedStatement, ResultSet}
 
-import empcl.cases.Task
 import empcl.dao.ITaskDao
 import empcl.helper.JdbcPoolHelper
+import empcl.spark.Task
 
 /**
   * @author : empcl
@@ -31,7 +31,7 @@ class TaskDaoImpl extends ITaskDao {
 
     val parseResultSet = (rs: ResultSet) => {
       if (rs.next()) {
-        val taskId = rs.getLong(1)
+        val taskId = rs.getInt(1)
         val taskName = rs.getString(2)
         val createTime = rs.getString(3)
         val startTime = rs.getString(4)
