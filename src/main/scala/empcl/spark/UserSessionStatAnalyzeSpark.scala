@@ -26,14 +26,14 @@ object UserSessionStatAnalyzeSpark {
   def main(args: Array[String]): Unit = {
 
     val sparkConf = new SparkConf()
-    sparkConf.setAppName(Constants.SPARK_APP_NAME).setMaster("local")
+    sparkConf.setAppName(Constants.SPARK_APP_NAME).setMaster("local[4]")
     val sparkSession = SparkSession.builder().config(sparkConf).getOrCreate()
     sparkSession.sparkContext.setLogLevel("ERROR")
 
     import sparkSession.implicits._
 
-    val userVistActionDF = sparkSession.read.parquet("C:\\empcl\\data\\input\\parquet\\user_visit_action\\")
-    val userInfoDF = sparkSession.read.parquet("C:\\empcl\\data\\input\\parquet\\user_info")
+    val userVistActionDF = sparkSession.read.parquet("E:\\empcl\\spark-project\\data\\input\\parquet\\user_visit_action\\")
+    val userInfoDF = sparkSession.read.parquet("E:\\empcl\\spark-project\\data\\input\\parquet\\user_info")
     userVistActionDF.createOrReplaceTempView("userVisitAction")
     userInfoDF.createOrReplaceTempView("userInfo")
 
@@ -109,20 +109,20 @@ object UserSessionStatAnalyzeSpark {
     // 按照年龄范围,职业,城市,性别,搜索词,点击品类过滤
     val filtered2FullInfoDS = sessionFullAggrInfoDS.filter(row => {
       /**
-        * |-- user_id: long (nullable = true) 0
+        * |-- user_id: string (nullable = true) 0
         * |-- session_id: string (nullable = true) 1
         * |-- action_time: string (nullable = true) 2
         * |-- search_keyword: string (nullable = true) 3
-        * |-- click_category_id: long (nullable = true) 4
-        * |-- page_id: long (nullable = true) 5
-        * |-- click_product_id: long (nullable = true) 6
+        * |-- click_category_id: string (nullable = true) 4
+        * |-- page_id: string (nullable = true) 5
+        * |-- click_product_id: string (nullable = true) 6
         * |-- order_category_ids: string (nullable = true) 7
         * |-- order_product_ids: string (nullable = true) 8
         * |-- pay_category_ids: string (nullable = true) 9
         * |-- pay_product_ids: string (nullable = true) 10
         * |-- username: string (nullable = true) 11
         * |-- name: string (nullable = true) 12
-        * |-- age: integer (nullable = true) 13
+        * |-- age: string (nullable = true) 13
         * |-- professional: string (nullable = true) 14
         * |-- city: string (nullable = true) 15
         * |-- sex: string (nullable = true) 16
@@ -131,7 +131,7 @@ object UserSessionStatAnalyzeSpark {
       var flag = true
       val keyWordsInfo = row.getString(3)
       val clickCategoryInfo = row.get(4)
-      val age = row.getInt(13).toString
+      val age = row.getString(13)
       val professional = row.getString(14)
       val city = row.getString(15)
       val sex = row.getString(16)
@@ -330,19 +330,19 @@ object UserSessionStatAnalyzeSpark {
           startTime = actionTime
         }
       }
-      val time = DateUtils.getHour(DateUtils.formatTime(startTime))
+      val hour = DateUtils.getHour(DateUtils.formatTime(startTime))
       val startTimeStr = DateUtils.formatTime(startTime)
-      SessionHour(session_id, time, startTimeStr)
+      SessionHour(session_id, hour, startTimeStr)
     })
 
     val random = new Random()
-    val HourSessionIndexsDS = SessionHourDS.groupByKey(_.time).mapGroups((hh, iter) => {
+    val ExtractHourSessionIndexDS = SessionHourDS.groupByKey(_.hour).mapGroups((hh, iter) => {
       val datas = iter.toArray
       val len = datas.length
       val count = ((len.toDouble / session_count.toDouble) * 100).toInt
 
       // 随机抽取session的索引，存储在String字符串中
-      var indexsBuffer = new ArrayBuffer[Int]
+      val indexsBuffer = new ArrayBuffer[Int]
 
       for (i <- (0 until (count))) {
         var extractIndex = random.nextInt(len)
@@ -351,12 +351,13 @@ object UserSessionStatAnalyzeSpark {
         }
         indexsBuffer.append(extractIndex)
       }
-
-      ExtractHourSessionIndex(hh, indexsBuffer.mkString(","))
+      ExtractHourSessionIndex(hh, indexsBuffer.mkString(",")) // hh 表示小时, 后面表示索引号
     })
 
+    val ExtractHourIndex2SessionsDS = ExtractHourSessionIndexDS.join(SessionHourDS, "hour")
+
     // 聚合出click_category_id,click_category_ids这样的数据
-    val ExtractHourSessionDS = filtered2FullInfoDS.groupByKey(_.getString(1)).mapGroups((session_id, iter) => {
+    val HourSessionDS = filtered2FullInfoDS.groupByKey(_.getString(1)).mapGroups((session_id, iter) => {
 
       val datas = iter.toArray
 
@@ -398,76 +399,71 @@ object UserSessionStatAnalyzeSpark {
       search_keywords_Str = search_keywords.mkString(",")
       click_category_ids_Str = click_category_ids.mkString(",")
 
-      ExtractHourSession(hour, session_id, formatTime, search_keywords_Str, click_category_ids_Str)
+      HourSession(hour, session_id, formatTime, search_keywords_Str, click_category_ids_Str)
     })
 
-    // 将HourSessionIndexsDS与filtered2FullInfoDS进行join
-    val ExtractHourIndex2SessionsDS = HourSessionIndexsDS.join(ExtractHourSessionDS, "hour")
-
-    ExtractHourIndex2SessionsDS.write.mode(SaveMode.Overwrite).json("C:\\empcl\\data\\json\\test\\extractSessionIndex")
-
-    val SelectedSessionDS = ExtractHourIndex2SessionsDS.groupByKey(_.getString(0)).mapGroups((hour, iter) => {
+    val SelectedSessionIdDS = ExtractHourIndex2SessionsDS.groupByKey(_.getString(0)).mapGroups((hour, iter) => {
       val datas = iter.toArray
       val data = datas(0)
       val indexsArr = data.getString(1).split(",")
       val indexsBuffer = new ArrayBuffer[Int]()
 
       // 用于保存选中的session_id
-      val selectedSessionBuffer = new ArrayBuffer[String]
+      val selectedSessionIdBuffer = new ArrayBuffer[String]
 
       for (i <- indexsArr.indices) {
         indexsBuffer.append(indexsArr(i).toInt)
       }
 
-      val insertSql_Extract = "insert into session_random_extract values (?,?,?,?,?)"
       for (index <- datas.indices) {
         if (indexsBuffer.contains(index)) {
           val selectedData = datas(index)
           val session_id = selectedData.getString(2)
-          val startTime = selectedData.getString(3)
-          val search_keywords = selectedData.getString(4)
-          val click_category_ids = selectedData.getString(5)
-          selectedSessionBuffer.append(session_id)
-
-          // 插入数据库
-          JdbcPoolHelper.getJdbcPoolHelper.execute(insertSql_Extract, pstmt => {
-            pstmt.setInt(1, task.taskId)
-            pstmt.setString(2, session_id)
-            pstmt.setString(3, startTime)
-            pstmt.setString(4, search_keywords)
-            pstmt.setString(5, click_category_ids)
-
-            pstmt.addBatch()
-
-          })
+          selectedSessionIdBuffer.append(session_id)
         }
       }
 
-      val selectedSession = selectedSessionBuffer.mkString(",")
+      val selectedSessionIds = selectedSessionIdBuffer.mkString(",")
 
-      SelectedSession(hour, selectedSession)
+      SelectedSessionId(hour, selectedSessionIds)
+    })
+    //|hour|session_ids|session_id|startTime|search_keywords|click_category_ids|
+    val ExtractSelectedHourSessionDS = SelectedSessionIdDS.join(HourSessionDS, "hour")
+
+    val ExtractRandomSessionDS = ExtractSelectedHourSessionDS.filter(row => {
+      var flag = false
+      // e4,6a,b7,a7
+      val session_ids = row.getString(1)
+      val session_id = row.getString(2)
+      val sessionIdArr = session_ids.split(",")
+      val sessionIdBuffer = new ArrayBuffer[String]()
+      for (index <- sessionIdArr.indices) {
+        sessionIdBuffer.append(sessionIdArr(index))
+      }
+      if (sessionIdBuffer.contains(session_id)) {
+        flag = true
+      }
+      flag
     })
 
-    /**
-      * root
-      * |-- user_id: long (nullable = true) 0
-      * |-- session_id: string (nullable = true)
-      * |-- action_time: string (nullable = true)
-      * |-- search_keyword: string (nullable = true)
-      * |-- click_category_id: long (nullable = true)
-      * |-- page_id: long (nullable = true) 5
-      * |-- click_product_id: long (nullable = true)
-      * |-- order_category_ids: string (nullable = true)
-      * |-- order_product_ids: string (nullable = true)
-      * |-- pay_category_ids: string (nullable = true)
-      * |-- pay_product_ids: string (nullable = true)
-      * |-- username: string (nullable = true) 11
-      * |-- name: string (nullable = true)
-      * |-- age: integer (nullable = true)
-      * |-- professional: string (nullable = true)
-      * |-- city: string (nullable = true) 15
-      * |-- sex: string (nullable = true)
-      */
+    val insertSql_Extract = "insert into session_random_extract values (?,?,?,?,?)"
+    JdbcPoolHelper.getJdbcPoolHelper.execute(insertSql_Extract, pstmt => {
+      ExtractRandomSessionDS.collect().foreach(row => {
+        val session_id = row.getString(2)
+        val startTime = row.getString(3)
+        val search_keywords = row.getString(4)
+        val click_category_ids = row.getString(5)
+
+        pstmt.setInt(1, task.taskId)
+        pstmt.setString(2, session_id)
+        pstmt.setString(3, startTime)
+        pstmt.setString(4, search_keywords)
+        pstmt.setString(5, click_category_ids)
+
+        pstmt.addBatch()
+      })
+    })
+
     val HourDetailSessionDS = filtered2FullInfoDS.map(row => {
       val action_time = row.getString(2)
       val hour = action_time.split(" ")(1).split(":")(0)
@@ -487,66 +483,40 @@ object UserSessionStatAnalyzeSpark {
         order_product_ids, pay_category_ids, pay_product_ids)
     })
 
-    /**
-      * |-- hour: string (nullable = true)
-      * |-- session_ids: string (nullable = true) 1
-      * |-- session_id: string (nullable = true) 2
-      * |-- user_id: string (nullable = true) 3
-      * |-- action_time: string (nullable = true) 4
-      * |-- search_keyword: string (nullable = true) 5
-      * |-- click_category_id: string (nullable = true) 6
-      * |-- page_id: string (nullable = true) 7
-      * |-- click_product_id: string (nullable = true) 8
-      * |-- order_category_ids: string (nullable = true) 9
-      * |-- order_product_ids: string (nullable = true) 10
-      * |-- pay_category_ids: string (nullable = true) 11
-      * |-- pay_product_ids: string (nullable = true) 12
-      */
-    val SelectedSessionDetail4HourDS = SelectedSessionDS.join(HourDetailSessionDS, "hour")
+    val SelectedSessionDetail4HourDS = HourDetailSessionDS.join(ExtractRandomSessionDS, "session_id")
 
-    SelectedSessionDetail4HourDS.filter(row => {
-      val session_ids = row.getString(1)
-      val session_idArr = session_ids.split(",")
-      val session_idBuffer = new ArrayBuffer[String]
-      for (index <- session_idArr.indices) {
-        val selectedSessionIndex = session_idArr(index)
-        session_idBuffer.append(selectedSessionIndex)
-      }
-      val session_id = row.getString(2)
-      if (session_idBuffer.contains(session_id)) {
-        // 满足条件，插入detail表中
-        val user_id = row.getString(3)
-        val page_id = row.getString(7)
-        val action_time = row.getString(4)
-        val search_keyword = row.getString(5)
-        val click_category_id = row.getString(6)
-        val click_product_id = row.getString(8)
-        val order_category_ids = row.getString(9)
-        val order_product_ids = row.getString(10)
-        val pay_category_ids = row.getString(11)
-        val pay_product_ids = row.getString(12)
+    val insertSql_detail = "insert into session_detail values (?,?,?,?,?,?,?,?,?,?,?,?)"
+    JdbcPoolHelper.getJdbcPoolHelper.execute(insertSql_detail, pstmt => {
+      SelectedSessionDetail4HourDS.collect().foreach(row => {
 
-        val insertSql_detail = "insert into session_detail values (?,?,?,?,?,?,?,?,?,?,?,?)"
-        JdbcPoolHelper.getJdbcPoolHelper.execute(insertSql_detail, pstmt => {
-          pstmt.setInt(1, task.taskId)
-          pstmt.setString(2, user_id)
-          pstmt.setString(3, session_id)
-          pstmt.setString(4, page_id)
-          pstmt.setString(5, action_time)
-          pstmt.setString(6, search_keyword)
-          pstmt.setString(7, click_category_id)
-          pstmt.setString(8, click_product_id)
-          pstmt.setString(9, order_category_ids)
-          pstmt.setString(10, order_product_ids)
-          pstmt.setString(11, pay_category_ids)
-          pstmt.setString(12, pay_product_ids)
+        val session_id = row.getString(0)
+        val user_id = row.getString(2)
+        val page_id = row.getString(6)
+        val action_time = row.getString(3)
+        val search_keyword = row.getString(4)
+        val click_category_id = row.getString(5)
+        val click_product_id = row.getString(7)
+        val order_category_ids = row.getString(8)
+        val order_product_ids = row.getString(9)
+        val pay_category_ids = row.getString(10)
+        val pay_product_ids = row.getString(11)
 
-          pstmt.addBatch()
-        })
-      }
-      true
+        pstmt.setInt(1, task.taskId)
+        pstmt.setString(2, user_id)
+        pstmt.setString(3, session_id)
+        pstmt.setString(4, page_id)
+        pstmt.setString(5, action_time)
+        pstmt.setString(6, search_keyword)
+        pstmt.setString(7, click_category_id)
+        pstmt.setString(8, click_product_id)
+        pstmt.setString(9, order_category_ids)
+        pstmt.setString(10, order_product_ids)
+        pstmt.setString(11, pay_category_ids)
+        pstmt.setString(12, pay_product_ids)
+
+        pstmt.addBatch()
+      })
     })
-
 
     sparkSession.stop()
   }
@@ -650,16 +620,16 @@ case class SessionAggrStat(sessionNum: Int, time_s1_3: Int, time_s4_6: Int, time
                            step_10_30: Int, step_30_60: Int, step_60: Int
                           )
 
-case class SessionHour(session_id: String, time: String, startTime: String)
+case class SessionHour(session_id: String, hour: String, startTime: String)
 
 case class ExtractHourSessionIndex(hour: String, indexs: String)
 
-case class ExtractHourSession(hour: String, session_id: String, startTime: String,
-                              search_keywords: String, click_category_ids: String)
+case class HourSession(hour: String, session_id: String, startTime: String,
+                       search_keywords: String, click_category_ids: String)
 
 case class ExtractRandomSession(session_id: String, startTime: String, search_keywords: String, click_category_ids: String)
 
-case class SelectedSession(hour: String, session_ids: String)
+case class SelectedSessionId(hour: String, session_ids: String)
 
 case class HourDetailSession(hour: String, session_id: String, user_id: String, action_time: String,
                              search_keyword: String, click_category_id: String, page_id: String,

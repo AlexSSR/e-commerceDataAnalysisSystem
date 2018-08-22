@@ -4,11 +4,11 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.apache.spark.sql.*;
-import org.apache.spark.sql.types.DataTypes;
-import org.apache.spark.sql.types.StructType;
+
 import empcl.utils.DateUtils;
 import empcl.utils.StringUtils;
-import org.junit.Test;
+import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructType;
 
 import java.util.*;
 
@@ -25,12 +25,13 @@ public class MockData {
      * @param sc
      * @param sqlContext
      */
-    @Test
-    public void mock() {
+    public static void main(String[] args) {
+
         SparkConf conf = new SparkConf();
         conf.setAppName("MockData").setMaster("local");
         JavaSparkContext sc = new JavaSparkContext(conf);
         SparkSession sparkSession = SparkSession.builder().config(conf).getOrCreate();
+
         List<Row> rows = new ArrayList<Row>();
 
         String[] searchKeywords = new String[]{"火锅", "蛋糕", "重庆辣子鸡", "重庆小面",
@@ -98,7 +99,7 @@ public class MockData {
 
         Dataset<Row> df = sparkSession.createDataFrame(rowsRDD, schema);
         df.registerTempTable("user_visit_action");
-        df.coalesce(1).write().mode(SaveMode.Overwrite).parquet("C:\\empcl\\data\\input\\parquet\\user_visit_action");
+        df.coalesce(1).write().mode(SaveMode.Overwrite).parquet("E:\\empcl\\spark-project\\data\\input\\parquet\\user_visit_action");
 //        df.show(1,false);
         //==================================================================
         rows.clear();
@@ -129,7 +130,7 @@ public class MockData {
                 DataTypes.createStructField("sex", DataTypes.StringType, true)));
 
         Dataset<Row> df2 = sparkSession.createDataFrame(rowsRDD, schema2);
-//        df2.coalesce(1).write().mode(SaveMode.Overwrite).json("C:\\empcl\\data\\input\\json\\user_info");
+        df2.coalesce(1).write().mode(SaveMode.Overwrite).parquet("E:\\empcl\\spark-project\\data\\input\\parquet\\user_info");
         df2.registerTempTable("user_info");
     }
 
