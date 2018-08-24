@@ -10,6 +10,7 @@ import empcl.utils._
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{SaveMode, SparkSession}
 
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.Random
 
@@ -26,9 +27,10 @@ object UserSessionStatAnalyzeSpark {
   def main(args: Array[String]): Unit = {
 
     val sparkConf = new SparkConf()
-    sparkConf.setAppName(Constants.SPARK_APP_NAME).setMaster("local[4]")
+    sparkConf.setAppName(Constants.SPARK_APP_NAME).setMaster("local")
     val sparkSession = SparkSession.builder().config(sparkConf).getOrCreate()
-    sparkSession.sparkContext.setLogLevel("ERROR")
+    val sc = sparkSession.sparkContext
+    sc.setLogLevel("ERROR")
 
     import sparkSession.implicits._
 
@@ -177,13 +179,10 @@ object UserSessionStatAnalyzeSpark {
     val sessionId2FullAggrInfoDS = filtered2FullInfoDS.groupByKey(_.getString(1)).mapGroups((sessionId, iter) => {
 
       val datas = iter.toArray
-
       var startTime: Date = null
       var endTime: Date = null
 
-      for (i <- datas.indices) {
-        val data = datas(i)
-
+      for (data <- datas) {
         val actionTime = DateUtils.parseTime(data.getString(2)).get
         if (startTime == null) {
           startTime = actionTime
@@ -201,7 +200,6 @@ object UserSessionStatAnalyzeSpark {
 
       val visitLength = ((endTime.getTime - startTime.getTime) / 1000).toShort
       val stepLength: Short = datas.length.toShort
-
 
       var aggrLengthInfo = Constants.TIME_PERIOD_1s_3s + "=0|" +
         Constants.TIME_PERIOD_4s_6s + "=0|" +
@@ -292,7 +290,7 @@ object UserSessionStatAnalyzeSpark {
       pstmt.setDouble(16, NumberUtils.formatDouble(aggredSessionInfo.step_30_60.toDouble / sessionNums.toDouble, 2))
       pstmt.setDouble(17, NumberUtils.formatDouble(aggredSessionInfo.step_60.toDouble / sessionNums.toDouble, 2))
 
-      //      pstmt.addBatch()
+      pstmt.addBatch()
 
     })
 
@@ -518,6 +516,309 @@ object UserSessionStatAnalyzeSpark {
       })
     })
 
+    // Top10 品类 ，按照点击，下单，支付的次数进行排序
+    // user_id|session_id 1|action_time 2|search_keyword 3|click_category_id 4|page_id 5|
+    // click_product_id 6|order_category_ids 7|order_product_ids 8|pay_category_ids 9|pay_product_ids 10|
+    // username 11 |name 12|age 13|professional 14|city 15|sex 16|
+    val fullInfoArr = filtered2FullInfoDS.collect()
+
+    // Map(90 -> 0, 99 -> 0)
+    val category_id_map = new mutable.HashMap[String, Int]()
+    fullInfoArr.foreach(row => {
+      val click_category_id = row.getString(4)
+      val order_category_ids = row.getString(7)
+      val pay_category_ids = row.getString(9)
+      if (order_category_ids != null) {
+        val order_category_idsArr = order_category_ids.split(",")
+        for (category_id <- order_category_idsArr) {
+          if (!category_id_map.contains(category_id)) {
+            category_id_map.put(category_id, 0)
+          }
+        }
+      }
+      if (pay_category_ids != null) {
+        val pay_category_idsArr = pay_category_ids.split(",")
+        for (category_id <- pay_category_idsArr) {
+          if (!category_id_map.contains(category_id)) {
+            category_id_map.put(category_id, 0)
+          }
+        }
+      }
+      category_id_map.put(click_category_id, 0)
+    })
+
+    // Map(90 -> 0, 99 -> 0)
+    val bc_cat_map = sc.broadcast[mutable.HashMap[String, Int]](category_id_map).value
+
+    val click_cat_map = bc_cat_map
+    val order_cat_map = bc_cat_map
+    val pay_cat_map = bc_cat_map
+
+    // 获取Category_id点击次数
+    filtered2FullInfoDS.mapPartitions(iter => {
+      val rows = iter.toArray
+      for (row <- rows) {
+        val category_id = row.getString(4)
+        if (click_cat_map.contains(category_id)) {
+          val count = click_cat_map.get(category_id).get
+          click_cat_map.put(category_id, count + 1)
+        } else {
+          click_cat_map.put(category_id, 0)
+        }
+      }
+      click_cat_map.toIterator
+    }).createOrReplaceTempView("categoryidcount_click")
+    val sql_cic_click =
+      """
+        |select
+        | _1 as category_id,
+        | _2 as count_click
+        |from
+        | categoryidcount_click
+      """.stripMargin
+    val categoryIdCountDS_click = sparkSession.sql(sql_cic_click).as[CategoryIdCountClick]
+
+    filtered2FullInfoDS.mapPartitions(iter => {
+      val rows = iter.toArray
+      for (row <- rows) {
+        val order_category_ids = row.getString(7)
+        if (order_category_ids != null) {
+          val order_category_idsArr = order_category_ids.split(",")
+          for (oci <- order_category_idsArr) {
+            if (order_cat_map.contains(oci)) {
+              val count = order_cat_map.get(oci).get
+              order_cat_map.put(oci, count + 1)
+            } else {
+              order_cat_map.put(oci, 0)
+            }
+          }
+        }
+      }
+      order_cat_map.toIterator
+    }).createOrReplaceTempView("categoryidcount_order")
+    val sql_cic_order =
+      """
+        |select
+        | _1 as category_id,
+        | _2 as count_order
+        |from
+        | categoryidcount_order
+      """.stripMargin
+    val categoryIdCountDS_order = sparkSession.sql(sql_cic_order).as[CategoryIdCountOrder]
+
+    filtered2FullInfoDS.mapPartitions(iter => {
+      val rows = iter.toArray
+      for (row <- rows) {
+        val pay_category_ids = row.getString(9)
+        if (pay_category_ids != null) {
+          val pay_category_idsArr = pay_category_ids.split(",")
+          for (pci <- pay_category_idsArr) {
+            if (order_cat_map.contains(pci)) {
+              val count = order_cat_map.get(pci).get
+              order_cat_map.put(pci, count + 1)
+            } else {
+              order_cat_map.put(pci, 0)
+            }
+          }
+        }
+      }
+      order_cat_map.toIterator
+    }).createOrReplaceTempView("categoryidcount_pay")
+    val sql_cic_pay =
+      """
+        |select
+        | _1 as category_id,
+        | _2 as count_pay
+        |from
+        | categoryidcount_pay
+      """.stripMargin
+    val categoryIdCountDS_pay = sparkSession.sql(sql_cic_pay).as[CategoryIdCountPay]
+
+    // |category_id|count_click|count_order|count_pay|
+    val categoryIdCountDS = categoryIdCountDS_click.join(categoryIdCountDS_order, "category_id").join(categoryIdCountDS_pay, "category_id")
+
+    // category_id|count_click|count_order|count_pay|
+    val categoryIdCountSortDS = categoryIdCountDS.sort(categoryIdCountDS("count_click").desc, categoryIdCountDS("count_order").desc, categoryIdCountDS("count_pay").desc)
+
+    val top10CategoryIdArr = categoryIdCountSortDS.take(10)
+
+    // 将top10品类写入到数据库中
+    val insertSql_category = "insert into top10_category values (?,?,?,?,?)"
+    JdbcPoolHelper.getJdbcPoolHelper.execute(insertSql_category, pstmt => {
+      top10CategoryIdArr.foreach(row => {
+        pstmt.setInt(1, task.taskId)
+        pstmt.setInt(2, row.getString(0).toInt) // category_id
+        pstmt.setInt(3, row.getInt(1)) // click
+        pstmt.setInt(4, row.getInt(2)) // order
+        pstmt.setInt(5, row.getInt(3)) // pay
+
+        pstmt.addBatch()
+      })
+    })
+
+    /**
+      * 对于top10热门品类，获取每个品类点击次数最多的10个session，以及其对应的访问明细
+      */
+    /**
+      * |-- user_id: string (nullable = true) 0
+      * |-- session_id: string (nullable = true) 1
+      * |-- action_time: string (nullable = true) 2
+      * |-- search_keyword: string (nullable = true) 3
+      * |-- click_category_id: string (nullable = true) 4
+      * |-- page_id: string (nullable = true) 5
+      * |-- click_product_id: string (nullable = true) 6
+      * |-- order_category_ids: string (nullable = true) 7
+      * |-- order_product_ids: string (nullable = true) 8
+      * |-- pay_category_ids: string (nullable = true) 9
+      * |-- pay_product_ids: string (nullable = true) 10
+      */
+    val categoryIdCountMapDS = filtered2FullInfoDS.groupByKey(_.getString(1)).mapGroups((session_id, iter) => {
+
+      val categoryIdCountMap = new mutable.HashMap[String, Int]
+      val datas = iter.toArray
+      for (data <- datas) {
+        val click_category_id = data.getString(4)
+        val order_category_ids = data.getString(7)
+        val pay_category_ids = data.getString(9)
+        if (order_category_ids != null) {
+          val order_category_idsArr = order_category_ids.split(",")
+          for (oci <- order_category_idsArr) {
+            categoryIdCountMap.get(oci) match {
+              case Some(x) => categoryIdCountMap.put(oci, x + 1)
+              case None => categoryIdCountMap.put(oci, 1)
+            }
+          }
+        }
+        if (pay_category_ids != null) {
+          val pay_category_idsArr = pay_category_ids.split(",")
+          for (pci <- pay_category_idsArr) {
+            categoryIdCountMap.get(pci) match {
+              case Some(x) => categoryIdCountMap.put(pci, x + 1)
+              case None => categoryIdCountMap.put(pci, 1)
+            }
+          }
+        }
+        if (click_category_id != null) {
+          categoryIdCountMap.get(click_category_id) match {
+            case Some(x) => categoryIdCountMap.put(click_category_id, x + 1)
+            case None => categoryIdCountMap.put(click_category_id, 1)
+          }
+        }
+      }
+      val CategoryIdSessionCountsIter = categoryIdCountMap.map(row => {
+        CategoryIdSessionCounts(row._1, session_id, row._2)
+      })
+      CategoryIdSessionCountsIter.toSeq
+    })
+
+    val CategoryIdSessionCountsDS = categoryIdCountMapDS.mapPartitions(rows => {
+      val buffer = new ArrayBuffer[CategoryIdSessionCounts]
+      for (row <- rows) {
+        buffer.append(row: _*)
+      }
+      buffer.iterator
+    })
+
+    // category_id|count_click|count_order|count_pay|\
+    val selectedCategoryIdArr = top10CategoryIdArr.map(row => {
+      val category_id = row.getString(0)
+      category_id
+    })
+    val bc_selectedCategory = sc.broadcast(selectedCategoryIdArr).value
+
+    val filtered2CategoryIdSessionCountsDS = CategoryIdSessionCountsDS.filter(cisc => {
+      var flag = false
+      val category_id = cisc.category_id
+      if (bc_selectedCategory.contains(category_id)) {
+        flag = true
+      }
+      flag
+    })
+
+    val selectedCategoryIdSessionCountsArrDS = filtered2CategoryIdSessionCountsDS.groupByKey(_.category_id).mapGroups((cid, iter) => {
+      val datas = iter.toArray
+      val sortedDatas = datas.sortBy(_.counts).reverse.take(10)
+      val selectedCategoryIdSessionCounts = sortedDatas.map(sds => {
+        val cid = sds.category_id
+        val sid = sds.session_id
+        val counts = sds.counts
+        CategoryIdSessionCounts(cid, sid, counts)
+      })
+      selectedCategoryIdSessionCounts
+    })
+    val selectedCategoryIdSessionCountsDS = selectedCategoryIdSessionCountsArrDS.mapPartitions(rows => {
+      val buffer = new ArrayBuffer[CategoryIdSessionCounts]
+      for (row <- rows) {
+        buffer.append(row: _*)
+      }
+      buffer.iterator
+    })
+    val insertSql_session = "insert into top10_category_session value (?,?,?,?)"
+    JdbcPoolHelper.getJdbcPoolHelper.execute(insertSql_session, pstmt => {
+      selectedCategoryIdSessionCountsDS.collect().foreach(row => {
+        val category_id = row.category_id
+        val session_id = row.session_id
+        val counts = row.counts
+
+        pstmt.setInt(1, task.taskId)
+        pstmt.setInt(2, category_id.toInt)
+        pstmt.setString(3, session_id)
+        pstmt.setInt(4, counts)
+
+        pstmt.addBatch()
+      })
+    })
+
+    /**
+      * root
+      * |-- session_id: string (nullable = true) 0
+      * |-- category_id: string (nullable = true) 1
+      * |-- counts: integer (nullable = true) 2
+      * |-- user_id: string (nullable = true) 3
+      * |-- action_time: string (nullable = true) 4
+      * |-- search_keyword: string (nullable = true) 5
+      * |-- click_category_id: string (nullable = true) 6
+      * |-- page_id: string (nullable = true) 7
+      * |-- click_product_id: string (nullable = true) 8
+      * |-- order_category_ids: string (nullable = true) 9
+      * |-- order_product_ids: string (nullable = true) 10
+      * |-- pay_category_ids: string (nullable = true) 11
+      * |-- pay_product_ids: string (nullable = true) 12
+      */
+    val selectedCategoryIdSessionInfoDS = selectedCategoryIdSessionCountsDS.join(sessionInfoDS, "session_id")
+    JdbcPoolHelper.getJdbcPoolHelper.execute(insertSql_detail, pstmt => {
+      selectedCategoryIdSessionInfoDS.collect().foreach(row => {
+        val session_id = row.getString(0)
+        val user_id = row.getString(3)
+        val page_id = row.getString(7)
+        val action_time = row.getString(4)
+        val search_keyword = row.getString(5)
+        val click_category_id = row.getString(6)
+        val click_product_id = row.getString(8)
+        val order_category_ids = row.getString(9)
+        val order_product_ids = row.getString(10)
+        val pay_category_ids = row.getString(11)
+        val pay_product_ids = row.getString(12)
+
+        pstmt.setInt(1, task.taskId)
+        pstmt.setString(2, user_id)
+        pstmt.setString(3, session_id)
+        pstmt.setString(4, page_id)
+        pstmt.setString(5, action_time)
+        pstmt.setString(6, search_keyword)
+        pstmt.setString(7, click_category_id)
+        pstmt.setString(8, click_product_id)
+        pstmt.setString(9, order_category_ids)
+        pstmt.setString(10, order_product_ids)
+        pstmt.setString(11, pay_category_ids)
+        pstmt.setString(12, pay_product_ids)
+
+        pstmt.addBatch()
+      })
+
+    })
+
+
     sparkSession.stop()
   }
 
@@ -635,3 +936,15 @@ case class HourDetailSession(hour: String, session_id: String, user_id: String, 
                              search_keyword: String, click_category_id: String, page_id: String,
                              click_product_id: String, order_category_ids: String, order_product_ids: String,
                              pay_category_ids: String, pay_product_ids: String)
+
+case class CategoryIdCountClick(category_id: String, count_click: Int)
+
+case class CategoryIdCountOrder(category_id: String, count_order: Int)
+
+case class CategoryIdCountPay(category_id: String, count_pay: Int)
+
+case class CategoryIdCount(category_id: String, count: Int)
+
+case class SessionId2CategoryIdMap(session_id: String, cat_map: mutable.HashMap[String, Int])
+
+case class CategoryIdSessionCounts(category_id: String, session_id: String, counts: Int)

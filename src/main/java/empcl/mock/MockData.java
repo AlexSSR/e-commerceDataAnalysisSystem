@@ -40,9 +40,9 @@ public class MockData {
         String[] actions = new String[]{"search", "click", "order", "pay"};
         Random random = new Random();
 
-        for (int i = 0; i < 1000; i++) {
+        for (int i = 0; i < 100; i++) {
             String userid = random.nextInt(10) + "";
-            for (int j = 0; j < 100; j++) {
+            for (int j = 0; j < 10; j++) {
                 String sessionid = UUID.randomUUID().toString().replace("-", "");
                 String baseActionTime = date + " " + random.nextInt(23);
 

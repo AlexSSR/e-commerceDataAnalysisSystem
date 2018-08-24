@@ -14,7 +14,7 @@ object Parq2Json {
     sc.setLogLevel("ERROR")
 
     val userVisitActionDF =  sparkSession.read.parquet("E:\\empcl\\spark-project\\data\\input\\parquet\\user_visit_action")
-    userVisitActionDF.write.mode(SaveMode.Overwrite).json("E:\\empcl\\spark-project\\data\\input\\json")
+    userVisitActionDF.write.mode(SaveMode.Overwrite).json("E:\\empcl\\spark-project\\data\\input\\json\\user_visit_action")
 
     sparkSession.stop()
 
