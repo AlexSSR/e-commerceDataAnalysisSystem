@@ -75,7 +75,7 @@ public class MockData {
                             pageid, actionTime, searchKeyword,
                             clickCategoryId, clickProductId,
                             orderCategoryIds, orderProductIds,
-                            payCategoryIds, payProductIds);
+                            payCategoryIds, payProductIds, String.valueOf(random.nextInt(10)));
                     rows.add(row);
                 }
             }
@@ -95,7 +95,8 @@ public class MockData {
                 DataTypes.createStructField("order_category_ids", DataTypes.StringType, true),
                 DataTypes.createStructField("order_product_ids", DataTypes.StringType, true),
                 DataTypes.createStructField("pay_category_ids", DataTypes.StringType, true),
-                DataTypes.createStructField("pay_product_ids", DataTypes.StringType, true)));
+                DataTypes.createStructField("pay_product_ids", DataTypes.StringType, true),
+                DataTypes.createStructField("city_id", DataTypes.StringType, true)));
 
         Dataset<Row> df = sparkSession.createDataFrame(rowsRDD, schema);
         df.registerTempTable("user_visit_action");
@@ -132,6 +133,26 @@ public class MockData {
         Dataset<Row> df2 = sparkSession.createDataFrame(rowsRDD, schema2);
         df2.coalesce(1).write().mode(SaveMode.Overwrite).parquet("E:\\empcl\\spark-project\\data\\input\\parquet\\user_info");
         df2.registerTempTable("user_info");
+
+        rows.clear();
+        int[] productStatus = new int[]{0, 1};
+        for(int i = 0; i < 100; i ++) {
+            String productId = String.valueOf(Long.valueOf(i));
+            String productName = "product" + i;
+            String extendInfo = "{'product_status': " + productStatus[random.nextInt(2)] + "}";
+            Row row = RowFactory.create(productId, productName, extendInfo);
+            rows.add(row);
+        }
+        rowsRDD = sc.parallelize(rows);
+        StructType schema3 = DataTypes.createStructType(Arrays.asList(
+                DataTypes.createStructField("product_id", DataTypes.StringType, true),
+                DataTypes.createStructField("product_name", DataTypes.StringType, true),
+                DataTypes.createStructField("extend_info", DataTypes.StringType, true)));
+
+        Dataset<Row> df3 = sparkSession.createDataFrame(rowsRDD, schema3);
+        df3.coalesce(1).write().mode(SaveMode.Overwrite).parquet("E:\\empcl\\spark-project\\data\\input\\parquet\\product_info");
+        df3.registerTempTable("product_info");
     }
 
 }
+

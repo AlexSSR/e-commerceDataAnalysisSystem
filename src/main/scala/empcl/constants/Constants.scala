@@ -26,7 +26,9 @@ object Constants {
   /**
     * Spark作业相关的常量
     */
-  val SPARK_APP_NAME = "UserSessionStatAnalyzeSpark"
+  val SPARK_APP_NAME_SESSION = "UserSessionStatAnalyzeSpark"
+  val SPARK_APP_NAME_PAGE = "PageOneStepConvertRateSpark"
+  val SPARK_APP_NAME_PRODUCT = "AreaProductTop3Spark"
 
   val SESSION_COUNT = "session_count"
 
@@ -59,6 +61,8 @@ object Constants {
   val PARAM_SEX = "sex"
   val PARAM_SEARCHKEYWORDS = "searchKeyWords"
   val PARAM_CLICKCATEGORY = "clickCategory"
+  val PARAM_TARGET_PAGE_FLOW = "targetPageFlow";
+
 
   /**
     * 数据字段相关常量

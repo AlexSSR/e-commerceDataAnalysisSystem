@@ -4,7 +4,7 @@ import java.sql.{PreparedStatement, ResultSet}
 
 import empcl.dao.ITaskDao
 import empcl.helper.JdbcPoolHelper
-import empcl.spark.Task
+import empcl.spark.session.Task
 
 /**
   * @author : empcl
