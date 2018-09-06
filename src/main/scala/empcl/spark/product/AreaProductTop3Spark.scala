@@ -13,7 +13,12 @@ import org.apache.spark.sql.types.DataTypes
 import scala.collection.mutable
 
 /**
-  * 根据用户指定的日期范围，统计各个区域下的最热门的top3商品
+  * 需求：根据用户指定的日期范围，统计各个区域下的最热门的top3商品
+  * 步骤：
+  *   1）首先分别读取出sessionInfoDS，productInfoDS，cityInfoDS的数据
+  *   2）统计出各个区域下的商品的点击次数
+  *   3）使用开窗函数计算出各个区域下最热门的top3商品并保存到数据库中
+  *
   */
 object AreaProductTop3Spark {
 

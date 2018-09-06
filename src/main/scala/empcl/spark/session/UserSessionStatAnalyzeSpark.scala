@@ -15,9 +15,12 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.Random
 
 /**
-  * 1. 按照session粒度进行数据聚合
-  * 2. 根据每个session的时长，步长区间分布统计出共有多少个session，以及各个区间上面session占得比重是多少
-  *
+  * 对于session的相关需求：
+  *   1. 按照session粒度进行数据聚合，根据每个session的时长，步长区间分布统计出共有多少个session，
+  *      以及各个区间上面session占得比重是多少，将结果插入数据库中
+  *   2. 按时间比例随机抽取处N个session，将结果插入数据库中
+  *   3. TopN 热门类别，按照点击次数，订单次数，购买次数依次进行排序
+  *   4. 对于TopN热门类别，获取每个品类点击次数最多的10个session，以及其对应的访问明细，并存入到数据库中
   * @author : empcl
   * @since : 2018/8/11 16:18 
   */
@@ -151,6 +154,14 @@ object UserSessionStatAnalyzeSpark {
 
     filtered2FullInfoDS.persist()
 
+    /**
+      * 需求一：按照session粒度进行数据聚合，根据每个session的时长，步长区间分布统计出共有多少个session，
+      *         以及各个区间上面session占得比重是多少，将结果插入数据库中
+      * 步骤：
+      *   1）按照session_id进行聚合，从聚合后的数据获得当前session的时长和步长，返回包含了时长，步长的DS
+      *   2）使用reduce聚合DS中的session相关信息落于时间区间，步数区间的情况，返回包含了时间区间，步数区间的总体情况的对象
+      *   3）插入数据库
+      */
     // 按照session_id 进行聚合数据
     // user_id|session_id|action_time|search_keyword|click_category_id|username|name
     val sessionId2FullAggrInfoDS = filtered2FullInfoDS.groupByKey(_.getString(1)).mapGroups((sessionId, iter) => {
@@ -266,12 +277,24 @@ object UserSessionStatAnalyzeSpark {
       pstmt.setDouble(16, NumberUtils.formatDouble(aggredSessionInfo.step_30_60.toDouble / sessionNums.toDouble, 2))
       pstmt.setDouble(17, NumberUtils.formatDouble(aggredSessionInfo.step_60.toDouble / sessionNums.toDouble, 2))
 
-      pstmt.addBatch()
+//      pstmt.addBatch()
 
     })
+
     /**
-      * 抽取的session总数记为100个
-      * 按每个小时占得一天总session的比例，随机抽取session
+      * 需求二：按时间比例随机抽取处N个session，将结果插入数据库中（此处N取100）
+      * 步骤：
+      *   1）从数据库中插曲共有多少条session
+      *   2）对过滤的数据进行session_id的聚合，返回SessionHour(session_id, hour, startTimeStr)
+      *   3）对上述返回的DS按照hour进行聚合，计算出当前小时应该包含的session_id的下标，返回ExtractHourSessionIndex(hh, indexsBuffer.mkString(",")) ，
+      *      其中hh 表示小时, 后面表示当前hour下应该抽取的session_id的下标集，以逗号分隔
+      *   4) 将2和3生成的两个session按照hour进行join，生成的数据集按照hour进行聚合，然后根据session下标抽取出session_id，
+      *      返回SelectedSessionId(hour, selectedSessionIds)
+      *   5）将按条件过滤后的数据按照session_id进行聚合，然后求出每个session所对应的search_keywords,click_category_ids的数据，
+      *      返回HourSession(hour, session_id, start_time, search_keywords_Str, click_category_ids_Str)数据集
+      *   6) 将4和5生成的数据按照hour进行join生成新的数据集，然后对新生成的数据集进行过滤（判断session_id是否在selectedSessionIds中）。
+      *      过滤后的数据就是我们需要的随机抽取的session
+      *   7）将6所得到的数据插入数据库
       */
     //从数据库读取共有多少条数据
     val querySql = "select session_count from session_aggr_stat where task_id = ?"
@@ -307,13 +330,14 @@ object UserSessionStatAnalyzeSpark {
       val startTimeStr = DateUtils.formatTime(startTime)
       SessionHour(session_id, hour, startTimeStr)
     })
+
     val random = new Random()
     val ExtractHourSessionIndexDS = SessionHourDS.groupByKey(_.hour).mapGroups((hh, iter) => {
       val datas = iter.toArray
       val len = datas.length
       val count = ((len.toDouble / session_count.toDouble) * 100).toInt
 
-      // 随机抽取session的索引，存储在String字符串中
+      // 随机抽取session的下标，存储在String字符串中
       val indexsBuffer = new ArrayBuffer[Int]
 
       if (len <= count) {
@@ -334,7 +358,7 @@ object UserSessionStatAnalyzeSpark {
 
     val ExtractHourIndex2SessionsDS = ExtractHourSessionIndexDS.join(SessionHourDS, "hour")
 
-    // 聚合出click_category_id,click_category_ids这样的数据
+    // 聚合出search_keywords,click_category_ids这样的数据
     val HourSessionDS = filtered2FullInfoDS.groupByKey(_.getString(1)).mapGroups((session_id, iter) => {
 
       val datas = iter.toArray
@@ -372,12 +396,12 @@ object UserSessionStatAnalyzeSpark {
           start_click_category_id = click_category_id
         }
       }
-      val formatTime = DateUtils.formatTime(startTime)
-      val hour = formatTime.split(" ")(1).split(":")(0)
+      val start_time = DateUtils.formatTime(startTime)
+      val hour = start_time.split(" ")(1).split(":")(0)
       search_keywords_Str = search_keywords.mkString(",")
       click_category_ids_Str = click_category_ids.mkString(",")
 
-      HourSession(hour, session_id, formatTime, search_keywords_Str, click_category_ids_Str)
+      HourSession(hour, session_id, start_time, search_keywords_Str, click_category_ids_Str)
     })
 
     val SelectedSessionIdDS = ExtractHourIndex2SessionsDS.groupByKey(_.getString(0)).mapGroups((hour, iter) => {
@@ -414,11 +438,7 @@ object UserSessionStatAnalyzeSpark {
       val session_ids = row.getString(1)
       val session_id = row.getString(2)
       val sessionIdArr = session_ids.split(",")
-      val sessionIdBuffer = new ArrayBuffer[String]()
-      for (index <- sessionIdArr.indices) {
-        sessionIdBuffer.append(sessionIdArr(index))
-      }
-      if (sessionIdBuffer.contains(session_id)) {
+      if (sessionIdArr.contains(session_id)) {
         flag = true
       }
       flag
@@ -438,7 +458,7 @@ object UserSessionStatAnalyzeSpark {
         pstmt.setString(4, search_keywords)
         pstmt.setString(5, click_category_ids)
 
-        pstmt.addBatch()
+//        pstmt.addBatch()
       })
     })
 
@@ -492,10 +512,21 @@ object UserSessionStatAnalyzeSpark {
         pstmt.setString(11, pay_category_ids)
         pstmt.setString(12, pay_product_ids)
 
-        pstmt.addBatch()
+//        pstmt.addBatch()
       })
     })
-    // Top10 品类 ，按照点击，下单，支付的次数进行排序
+
+    /**
+      * 需求三：TopN 热门类别，按照点击次数，订单次数，购买次数依次进行排序
+      * 步骤：
+      *   1）将过滤后的数据拉取到Driver机器上进行统计类别统计工作，并把这些category_id以（category_id,0）的形式存入
+      *      HashMap中，并把这个HashMap广播到各个任务节点上categoryIdCountDS_click
+      *   2）对过滤后的数据进行映射操作，分别求出categoryIdCountDS_click(category_id: String, count_click: Int)，
+      *      categoryIdCountDS_order(category_id: String, count_order: Int)，
+      *      categoryIdCountDS_pay(category_id: String, count_pay: Int)。然后对这三个数据集按照category_id依次进行join，
+      *      得到一个新的数据集。
+      *   3）根据2得到的数据集，分别进行sort，take操作，得到所需要的数据，然后将这个数据写入到数据库中
+      */
     val fullInfoArr = filtered2FullInfoDS.collect()
 
     // Map(90 -> 0, 99 -> 0)
@@ -628,13 +659,21 @@ object UserSessionStatAnalyzeSpark {
         pstmt.setInt(4, row.getInt(2)) // order
         pstmt.setInt(5, row.getInt(3)) // pay
 
-        pstmt.addBatch()
+//        pstmt.addBatch()
       })
     })
+
     /**
-      * 对于top10热门品类，获取每个品类点击次数最多的10个session，以及其对应的访问明细
+      * 需求四：对于TopN热门类别，获取每个品类访问次数最多的10个session，以及其对应的访问明细，并存入到数据库中
+      * 步骤：
+      *   1）对过滤后的数据按照session_id进行聚合，计算出每个session访问每个品类的个数，返回
+      *       categoryIdCountMapDS(category_id: String,session_id: String,counts: Int)
+      *   2）将top10CategoryIdArr中的category_id抽取出来形成一个新的数组，并且将这个数组广播到多个任务节点上进行运行
+      *   3）对1中生成的数据集通过2得到的category_id数组进行过滤得到的数据集就是包含了Top N热门品类的session
+      *   4) 对于3中生成的新的数据集，按照category_id进行聚合，对于聚合后的数据按照counts进行逆序排序，使用take抽取前十个数据，生成新的数据集就是我们所需要的数据
+      *   5）将4生成的新的数据集插入数据库中
       */
-    val categoryIdCountMapDS = filtered2FullInfoDS.groupByKey(_.getString(1)).mapGroups((session_id, iter) => {
+    val categoryIdCountMapDS = filtered2FullInfoDS.groupByKey(_.getString(1)).flatMapGroups((session_id, iter) => {
 
       val categoryIdCountMap = new mutable.HashMap[String, Int]
       val datas = iter.toArray
@@ -670,15 +709,7 @@ object UserSessionStatAnalyzeSpark {
       val CategoryIdSessionCountsIter = categoryIdCountMap.map(row => {
         CategoryIdSessionCounts(row._1, session_id, row._2)
       })
-      CategoryIdSessionCountsIter.toSeq
-    })
-
-    val CategoryIdSessionCountsDS = categoryIdCountMapDS.mapPartitions(rows => {
-      val buffer = new ArrayBuffer[CategoryIdSessionCounts]
-      for (row <- rows) {
-        buffer.append(row: _*)
-      }
-      buffer.iterator
+      CategoryIdSessionCountsIter
     })
 
     // category_id|count_click|count_order|count_pay|\
@@ -688,7 +719,7 @@ object UserSessionStatAnalyzeSpark {
     })
     val bc_selectedCategory = sc.broadcast(selectedCategoryIdArr).value
 
-    val filtered2CategoryIdSessionCountsDS = CategoryIdSessionCountsDS.filter(cisc => {
+    val filtered2CategoryIdSessionCountsDS = categoryIdCountMapDS.filter(cisc => {
       var flag = false
       val category_id = cisc.category_id
       if (bc_selectedCategory.contains(category_id)) {
@@ -696,7 +727,7 @@ object UserSessionStatAnalyzeSpark {
       }
       flag
     })
-
+    // category_id: String,session_id: String,counts: Int
     val selectedCategoryIdSessionCountsArrDS = filtered2CategoryIdSessionCountsDS.groupByKey(_.category_id).mapGroups((cid, iter) => {
       val datas = iter.toArray
       val sortedDatas = datas.sortBy(_.counts).reverse.take(10)
@@ -727,7 +758,7 @@ object UserSessionStatAnalyzeSpark {
         pstmt.setString(3, session_id)
         pstmt.setInt(4, counts)
 
-        pstmt.addBatch()
+//        pstmt.addBatch()
       })
     })
     val selectedCategoryIdSessionInfoDS = selectedCategoryIdSessionCountsDS.join(sessionInfoDS, "session_id")
@@ -758,7 +789,7 @@ object UserSessionStatAnalyzeSpark {
         pstmt.setString(11, pay_category_ids)
         pstmt.setString(12, pay_product_ids)
 
-        pstmt.addBatch()
+//        pstmt.addBatch()
       })
     })
 

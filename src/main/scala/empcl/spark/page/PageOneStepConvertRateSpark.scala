@@ -49,6 +49,14 @@ object PageOneStepConvertRateSpark {
       """.stripMargin
     val sessionId2PageIdDS = sparkSession.sql(sql_session).as[SessionId2PageId]
 
+    /**
+      * 需求：根据指定页面流计算页面单跳转化率
+      *       按照指定页面流的顺序进行计算
+      * 步骤：
+      *   1）读取数据，根据session_id进行聚合，返回包含了PageIdCount的数据集，而PageIdCount组成内容为：(page_id: String,count: Int)
+      *   2）对1中所得到的数据集根据page_id进行聚合，然后对每组求和，并且按照page_id从小到大进行排序
+      *   3）根据targetPageFlow计算出各个页面单跳的转化率，并写入数据库
+      */
     //targetPageFlow 3,4,5
     val pageIdCountBufferDS = sessionId2PageIdDS.groupByKey(_.session_id).flatMapGroups((sid, iter) => {
       val flowsBuffer = new ArrayBuffer[PageIdCount]()
@@ -93,7 +101,7 @@ object PageOneStepConvertRateSpark {
       pstmt.setInt(1,3)
       pstmt.setString(2,rates)
 
-//      pstmt.addBatch()
+      pstmt.addBatch()
     })
 
 
